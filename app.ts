@@ -3,17 +3,17 @@ import cors from "cors";
 import express, { Request, Response } from "express";
 import { initializeApp } from "firebase/app";
 import {
-    Database,
-    equalTo,
-    get,
-    getDatabase,
-    orderByChild,
-    push,
-    query,
-    ref,
-    remove,
-    set,
-    update
+  Database,
+  equalTo,
+  get,
+  getDatabase,
+  orderByChild,
+  push,
+  query,
+  ref,
+  remove,
+  set,
+  update
 } from "firebase/database";
 import moment from "moment-timezone";
 
@@ -380,7 +380,7 @@ app.put("/control/status/:id/:id_user_machine/:place/:status/:time", async (req,
     const place = req.params.place;
     const status = parseInt(req.params.status);
     const time = parseInt(req.params.time);
-    
+    const date = moment().tz("Asia/Bangkok");
     let statuses;
 
     if(status == 0){
@@ -395,6 +395,7 @@ app.put("/control/status/:id/:id_user_machine/:place/:status/:time", async (req,
       place,
       status: statuses,
       time,
+      date,
     };
 
     await set(machineRef, newData);
