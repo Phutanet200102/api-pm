@@ -356,6 +356,7 @@ app.put("/control/:id/:id_user_machine/:place/:status/:time", async (req, res) =
     const place = req.params.place;
     const status = parseInt(req.params.status);
     const time = parseInt(req.params.time);
+    const date = moment().tz("Asia/Bangkok").format();
 
     const machineRef = ref(db, `Control/${id}`);
     const newData = {
@@ -363,6 +364,7 @@ app.put("/control/:id/:id_user_machine/:place/:status/:time", async (req, res) =
       place,
       status,
       time,
+      date,
     };
 
     await set(machineRef, newData);
@@ -380,7 +382,7 @@ app.put("/control/status/:id/:id_user_machine/:place/:status/:time", async (req,
     const place = req.params.place;
     const status = parseInt(req.params.status);
     const time = parseInt(req.params.time);
-    const date = moment().tz("Asia/Bangkok");
+    const date = moment().tz("Asia/Bangkok").format();
     let statuses;
 
     if(status == 0){
@@ -671,3 +673,10 @@ app.get("/data/year/:id", async (req: Request, res: Response) => {
   }
 });
 //npx nodemon server.ts
+
+//git init
+//git add .
+//git status
+//git commit -m "added channel name"
+//git branch
+//git push origin main
