@@ -374,14 +374,14 @@ app.put("/control/:id/:id_user_machine/:place/:status/:time/:date", async (req, 
   }
 });
 
-app.put("/control/status/:id/:id_user_machine/:place/:status/:time/:date", async (req, res) => {
+app.put("/control/status/:id/:id_user_machine/:place/:status/:time", async (req, res) => {
   try {
     const id = req.params.id;
     const id_user_machine = req.params.id_user_machine;
     const place = req.params.place;
     const status = parseInt(req.params.status);
     const time = parseInt(req.params.time);
-    const date = req.params.date;
+    const date = moment().tz("Asia/Bangkok").format();
     let statuses;
 
     if(status == 0){
