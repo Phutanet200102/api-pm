@@ -359,11 +359,11 @@ app.put("/control/:id/:id_user_machine/:place/:status/:time/:date", async (req, 
 
     const machineRef = ref(db, `Control/${id}`);
     const newData = {
+      date,
       id_user_machine,
       place,
       status,
       time,
-      date,
     };
 
     await set(machineRef, newData);
@@ -374,17 +374,18 @@ app.put("/control/:id/:id_user_machine/:place/:status/:time/:date", async (req, 
   }
 });
 
-app.put("/control/status/:id/:id_user_machine/:place/:status/:time", async (req, res) => {
+app.post("/control/status/:id/:id_user_machine/:place/:status/:time", async (req, res) => {
   try {
     const id = req.params.id;
     const id_user_machine = req.params.id_user_machine;
     const place = req.params.place;
-    const status = parseInt(req.params.status);
-    const time = parseInt(req.params.time);
+    const status = req.params.status;
+    const time = req.params.time;
     const date = moment().tz("Asia/Bangkok").format();
     let statuses;
 
-    if(status == 0){
+
+    if(status == '0'){
       statuses = 1;
     }else{
       statuses = 0;
@@ -395,7 +396,7 @@ app.put("/control/status/:id/:id_user_machine/:place/:status/:time", async (req,
       id_user_machine,
       place,
       status: statuses,
-      time,
+      time: parseInt(time),
       date,
     };
 
