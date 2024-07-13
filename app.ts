@@ -3,6 +3,7 @@ import cors from "cors";
 import express, { Request, Response } from "express";
 import { initializeApp } from "firebase/app";
 import {
+  child,
   Database,
   equalTo,
   get,
@@ -285,14 +286,13 @@ app.get("/user_machine/:id", async (req: Request, res: Response) => {
       );
 
       if (controlSnapshot.exists()) {
-
         const controlData = controlSnapshot.val();
         const controlIds = Object.keys(controlData);
         
         const now = moment().tz("Asia/Bangkok");
         const updates: { [key: string]: any } = {};
 
-        const filteredControlss = controlIds
+        const filteredControls = controlIds
           .map((controlId) => {
             const control = controlData[controlId];
             const controlDate = moment(control.date).tz("Asia/Bangkok");
@@ -306,17 +306,12 @@ app.get("/user_machine/:id", async (req: Request, res: Response) => {
             return null;
           })
           .filter((control) => control !== null);
-          for (const machineId of machineIds) {
-            const controlRef = ref(db, "Control");
-            const controlSnapshot = await get(
-              query(controlRef, orderByChild("id_user_machine"), equalTo(machineId))
-            );
-          }
-          const controlDatas = controlSnapshot.val();
-          const controlIdess = Object.keys(controlDatas)[0];
-          const controls = controlData[controlIdess];
-          const controlWithId = { id: controlIdess, ...controls };
 
+        // Get the most recent control
+        const controlIdess = controlIds.length > 0 ? controlIds[0] : null;
+        const controlWithId = controlIdess ? { id: controlIdess, ...controlData[controlIdess] } : null;
+
+        // Get the most recent machine data
         const machineIdes = Object.keys(machinesData)[0];
         const machine = machinesData[machineIdes];
         const machineWithId = { id: machineIdes, ...machine };
@@ -325,9 +320,13 @@ app.get("/user_machine/:id", async (req: Request, res: Response) => {
         if (dataSnapshot.exists()) {
           const dataData = dataSnapshot.val();
           const dataIds = Object.keys(dataData);
-          const dataId = dataIds[dataIds.length - 1];
-          const data = dataData[dataId];
-          dataWithId = { id: dataId, ...data };
+
+          // Find the latest data entry
+          const latestDataId = dataIds.reduce((latestId, currentId) => {
+            return moment(dataData[currentId].date).isAfter(moment(dataData[latestId].date)) ? currentId : latestId;
+          }, dataIds[0]);
+
+          dataWithId = { id: latestDataId, ...dataData[latestDataId] };
         }
 
         if (Object.keys(updates).length > 0) {
@@ -584,19 +583,89 @@ app.get("/data/day/:id", async (req: Request, res: Response) => {
     const data = snapshot.val();
     const currentDate = moment().tz("Asia/Bangkok").format("YYYY-MM-DD");
 
-    const filteredData = Object.values(data).filter((entry: any) => {
+    const filteredData = Object.entries(data).filter(([key, entry]: [string, any]) => {
       const entryDate = moment(entry.date).tz("Asia/Bangkok").format("YYYY-MM-DD");
       return entryDate === currentDate;
     });
 
-    const pm2_5Values = filteredData.map((entry: any) => entry.pm2_5);
-    const minPm2_5 = Math.min(...pm2_5Values);
-    const maxPm2_5 = Math.max(...pm2_5Values);
+    // Identify the latest key
+    const latestKey = Object.keys(data).reduce((a, b) => (data[a].date > data[b].date ? a : b));
+
+    // Exclude the latest entry from filtered data
+    const filteredDataWithoutLatest = filteredData.filter(([key]) => key !== latestKey);
+
+    const groupedData: { [hour: string]: { keys: string[], temperature: number[], humidity: number[], pm2_5: number[], id_user_machine: string, date: string } } = {};
+
+    filteredDataWithoutLatest.forEach(([key, entry]: [string, any]) => {
+      const hour = moment(entry.date).tz("Asia/Bangkok").format("HH");
+      if (!groupedData[hour]) {
+        groupedData[hour] = { keys: [], temperature: [], humidity: [], pm2_5: [], id_user_machine: entry.id_user_machine, date: entry.date };
+      }
+      groupedData[hour].keys.push(key);
+      groupedData[hour].temperature.push(entry.temperature);
+      groupedData[hour].humidity.push(entry.humidity);
+      groupedData[hour].pm2_5.push(entry.pm2_5);
+    });
+
+    const hourlyData = Object.entries(groupedData).map(([hour, values]) => {
+      const avgTemperature = (values.temperature.reduce((a, b) => a + b, 0) / values.temperature.length).toFixed(1);
+      const avgHumidity = (values.humidity.reduce((a, b) => a + b, 0) / values.humidity.length).toFixed(1);
+      const avgPm2_5 = (values.pm2_5.reduce((a, b) => a + b, 0) / values.pm2_5.length).toFixed(1);
+
+      return {
+        hour: parseInt(hour),
+        id_user_machine: values.id_user_machine,
+        date: values.date,
+        temperature: parseFloat(avgTemperature),
+        humidity: parseFloat(avgHumidity),
+        pm2_5: parseFloat(avgPm2_5),
+      };
+    });
+
+    // Sort hourlyData by hour from lowest to highest
+    hourlyData.sort((a, b) => a.hour - b.hour);
+
+    // Remove entries from the original data, excluding the latest key
+    for (const values of Object.values(groupedData)) {
+      for (const key of values.keys) {
+        if (key !== latestKey) {
+          await remove(ref(db, `Data/${key}`));
+        }
+      }
+    }
+
+    // Add aggregated data back to the database
+    for (const hourData of hourlyData) {
+      const newKey = push(ref(db, "Data")).key; // Generate a new key for the new entry
+      await set(ref(db, `Data/${newKey}`), {
+        id_user_machine: hourData.id_user_machine,
+        date: hourData.date,
+        temperature: hourData.temperature,
+        humidity: hourData.humidity,
+        pm2_5: hourData.pm2_5,
+      });
+    }
+
+    // Calculate min and max from hourlyData
+    const averageTemperatures = hourlyData.map(entry => entry.temperature);
+    const averageHumidities = hourlyData.map(entry => entry.humidity);
+    const averagePm2_5Values = hourlyData.map(entry => entry.pm2_5);
+
+    const minTemperature = Math.min(...averageTemperatures).toFixed(1);
+    const maxTemperature = Math.max(...averageTemperatures).toFixed(1);
+    const minHumidity = Math.min(...averageHumidities).toFixed(1);
+    const maxHumidity = Math.max(...averageHumidities).toFixed(1);
+    const minPm2_5 = Math.min(...averagePm2_5Values).toFixed(1);
+    const maxPm2_5 = Math.max(...averagePm2_5Values).toFixed(1);
 
     res.json({
-      data: filteredData,
-      minPm2_5,
-      maxPm2_5,
+      data: hourlyData,
+      minTemperature: parseFloat(minTemperature),
+      maxTemperature: parseFloat(maxTemperature),
+      minHumidity: parseFloat(minHumidity),
+      maxHumidity: parseFloat(maxHumidity),
+      minPm2_5: parseFloat(minPm2_5),
+      maxPm2_5: parseFloat(maxPm2_5),
     });
   } catch (error) {
     res.status(500).json({ error: "Error retrieving data" });
@@ -619,19 +688,108 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
     const data = snapshot.val();
     const currentDate = moment().tz("Asia/Bangkok").format("YYYY-MM");
 
-    const filteredData = Object.values(data).filter((entry: any) => {
+    const filteredData = Object.entries(data).filter(([key, entry]: [string, any]) => {
       const entryDate = moment(entry.date).tz("Asia/Bangkok").format("YYYY-MM");
       return entryDate === currentDate;
     });
 
-    const pm2_5Values = filteredData.map((entry: any) => entry.pm2_5);
-    const minPm2_5 = Math.min(...pm2_5Values);
-    const maxPm2_5 = Math.max(...pm2_5Values);
+    // Identify the latest key
+    const latestKey = Object.keys(data).reduce((latest, key) => {
+      return moment(data[key].date).isAfter(moment(data[latest].date)) ? key : latest;
+    }, Object.keys(data)[0]);
+
+    // Exclude the latest entry from filtered data
+    const filteredDataWithoutLatest = filteredData.filter(([key]) => key !== latestKey);
+
+    const groupedData: { [day: string]: { [hour: string]: { keys: string[], temperature: number[], humidity: number[], pm2_5: number[], id_user_machine: string, date: string } } } = {};
+
+    filteredDataWithoutLatest.forEach(([key, entry]: [string, any]) => {
+      const day = moment(entry.date).tz("Asia/Bangkok").format("YYYY-MM-DD");
+      const hour = moment(entry.date).tz("Asia/Bangkok").format("HH");
+      
+      if (!groupedData[day]) {
+        groupedData[day] = {};
+      }
+      
+      if (!groupedData[day][hour]) {
+        groupedData[day][hour] = { keys: [], temperature: [], humidity: [], pm2_5: [], id_user_machine: entry.id_user_machine, date: entry.date };
+      }
+      
+      groupedData[day][hour].keys.push(key);
+      groupedData[day][hour].temperature.push(entry.temperature);
+      groupedData[day][hour].humidity.push(entry.humidity);
+      groupedData[day][hour].pm2_5.push(entry.pm2_5);
+    });
+
+    const monthlyData = Object.entries(groupedData).flatMap(([day, hoursData]) => {
+      return Object.entries(hoursData).map(([hour, values]) => {
+        const avgTemperature = (values.temperature.reduce((a, b) => a + b, 0) / values.temperature.length).toFixed(1);
+        const avgHumidity = (values.humidity.reduce((a, b) => a + b, 0) / values.humidity.length).toFixed(1);
+        const avgPm2_5 = (values.pm2_5.reduce((a, b) => a + b, 0) / values.pm2_5.length).toFixed(1);
+
+        return {
+          hour: parseInt(hour),
+          id_user_machine: values.id_user_machine,
+          date: values.date,
+          keys: values.keys,
+          temperature: parseFloat(avgTemperature),
+          humidity: parseFloat(avgHumidity),
+          pm2_5: parseFloat(avgPm2_5),
+        };
+      });
+    });
+
+    // Calculate overall min/max for the month based on hourly averages
+    const allTemperatures = monthlyData.map(entry => entry.temperature);
+    const allHumidities = monthlyData.map(entry => entry.humidity);
+    const allPm2_5Values = monthlyData.map(entry => entry.pm2_5);
+
+    const minTemperature = Math.min(...allTemperatures).toFixed(1);
+    const maxTemperature = Math.max(...allTemperatures).toFixed(1);
+    const minHumidity = Math.min(...allHumidities).toFixed(1);
+    const maxHumidity = Math.max(...allHumidities).toFixed(1);
+    const minPm2_5 = Math.min(...allPm2_5Values).toFixed(1);
+    const maxPm2_5 = Math.max(...allPm2_5Values).toFixed(1);
+
+    const updates: { [key: string]: null | any } = {};
+
+    monthlyData.forEach(entry => {
+      entry.keys.forEach(key => {
+        // Only mark for deletion if the key is not the latest
+        if (key !== latestKey) {
+          updates[`Data/${key}`] = null; // Mark for deletion
+        }
+      });
+
+      const newEntryKey = push(child(ref(db), "Data")).key;
+      if (newEntryKey) {
+        updates[`Data/${newEntryKey}`] = {
+          id_user_machine: entry.id_user_machine,
+          date: entry.date,
+          temperature: entry.temperature,
+          humidity: entry.humidity,
+          pm2_5: entry.pm2_5,
+        };
+      }
+    });
+
+    await update(ref(db), updates);
 
     res.json({
-      data: filteredData,
-      minPm2_5,
-      maxPm2_5,
+      data: monthlyData.map(({ hour, id_user_machine, date, temperature, humidity, pm2_5 }) => ({
+        hour,
+        id_user_machine,
+        date,
+        temperature,
+        humidity,
+        pm2_5
+      })),
+      minTemperature: parseFloat(minTemperature),
+      maxTemperature: parseFloat(maxTemperature),
+      minHumidity: parseFloat(minHumidity),
+      maxHumidity: parseFloat(maxHumidity),
+      minPm2_5: parseFloat(minPm2_5),
+      maxPm2_5: parseFloat(maxPm2_5),
     });
   } catch (error) {
     res.status(500).json({ error: "Error retrieving data" });
