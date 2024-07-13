@@ -687,10 +687,11 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
 
     const data = snapshot.val();
     const currentDate = moment().tz("Asia/Bangkok").format("YYYY-MM");
+    const today = moment().tz("Asia/Bangkok").format("YYYY-MM-DD");
 
     const filteredData = Object.entries(data).filter(([key, entry]: [string, any]) => {
       const entryDate = moment(entry.date).tz("Asia/Bangkok").format("YYYY-MM");
-      return entryDate === currentDate;
+      return entryDate === currentDate && moment(entry.date).tz("Asia/Bangkok").format("YYYY-MM-DD") !== today;
     });
 
     // Identify the latest key
@@ -735,6 +736,7 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
           temperature: parseFloat(avgTemperature),
           humidity: parseFloat(avgHumidity),
           pm2_5: parseFloat(avgPm2_5),
+          id: values.keys // Include the keys as id
         };
       });
     });
@@ -776,13 +778,12 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
     await update(ref(db), updates);
 
     res.json({
-      data: monthlyData.map(({ hour, id_user_machine, date, temperature, humidity, pm2_5 }) => ({
-        hour,
+      data: monthlyData.map(({id_user_machine, date, temperature, humidity, pm2_5, keys }) => ({
         id_user_machine,
         date,
         temperature,
         humidity,
-        pm2_5
+        pm2_5,
       })),
       minTemperature: parseFloat(minTemperature),
       maxTemperature: parseFloat(maxTemperature),
@@ -800,36 +801,104 @@ app.get("/data/year/:id", async (req: Request, res: Response) => {
   const id_user_machine: string = req.params.id;
 
   try {
-    const dataRef = ref(db, "Data");
-    const snapshot = await get(
-      query(dataRef, orderByChild("id_user_machine"), equalTo(id_user_machine))
-    );
+      const dataRef = ref(db, "Data");
+      const snapshot = await get(
+          query(dataRef, orderByChild("id_user_machine"), equalTo(id_user_machine))
+      );
 
-    if (!snapshot.exists()) {
-      return res.status(404).json({ error: "No data found for the specified id_user_machine" });
-    }
+      if (!snapshot.exists()) {
+          return res.status(404).json({ error: "No data found for the specified id_user_machine" });
+      }
 
-    const data = snapshot.val();
-    const currentDate = moment().tz("Asia/Bangkok").format("YYYY");
+      const data = snapshot.val();
+      const currentYear = moment().tz("Asia/Bangkok").format("YYYY");
+      const currentMonth = moment().tz("Asia/Bangkok").format("MM");
 
-    const filteredData = Object.values(data).filter((entry: any) => {
-      const entryDate = moment(entry.date).tz("Asia/Bangkok").format("YYYY");
-      return entryDate === currentDate;
-    });
+      const filteredData = Object.entries(data).filter(([key, entry]: [string, any]) => {
+          const entryYear = moment(entry.date).tz("Asia/Bangkok").format("YYYY");
+          const entryMonth = moment(entry.date).tz("Asia/Bangkok").format("MM");
+          return entryYear === currentYear && entryMonth !== currentMonth;
+      });
 
-    const pm2_5Values = filteredData.map((entry: any) => entry.pm2_5);
-    const minPm2_5 = Math.min(...pm2_5Values);
-    const maxPm2_5 = Math.max(...pm2_5Values);
+      const monthlyData: { [key: string]: any[] } = {};
 
-    res.json({
-      data: filteredData,
-      minPm2_5,
-      maxPm2_5,
-    });
+      filteredData.forEach(([key, entry]: [string, any]) => {
+          const month = moment(entry.date).tz("Asia/Bangkok").format("MM");
+          if (!monthlyData[month]) {
+              monthlyData[month] = [];
+          }
+          monthlyData[month].push({ key, ...entry });
+      });
+
+      const result = Object.keys(monthlyData).map((month) => {
+          const entries = monthlyData[month];
+
+          const pm2_5Values = entries.map((entry: any) => entry.pm2_5);
+          const humidityValues = entries.map((entry: any) => entry.humidity);
+          const temperatureValues = entries.map((entry: any) => entry.temperature);
+
+          const avgPm2_5 = (pm2_5Values.reduce((sum, value) => sum + value, 0) / pm2_5Values.length) || 0;
+          const avgHumidity = (humidityValues.reduce((sum, value) => sum + value, 0) / humidityValues.length) || 0;
+          const avgTemperature = (temperatureValues.reduce((sum, value) => sum + value, 0) / temperatureValues.length) || 0;
+
+          return {
+              month,
+              id_user_machine: entries[0].id_user_machine,
+              date: entries[0].date,
+              keys: entries.map((entry: any) => entry.key),
+              pm2_5: parseFloat(avgPm2_5.toFixed(1)),
+              humidity: parseFloat(avgHumidity.toFixed(1)),
+              temperature: parseFloat(avgTemperature.toFixed(1)),
+          };
+      });
+
+      // Calculate min and max values for temperature, humidity, and pm2_5
+      const allTemperatures = result.map(entry => entry.temperature);
+      const allHumidities = result.map(entry => entry.humidity);
+      const allPm2_5Values = result.map(entry => entry.pm2_5);
+
+      const minTemperature = Math.min(...allTemperatures).toFixed(1);
+      const maxTemperature = Math.max(...allTemperatures).toFixed(1);
+      const minHumidity = Math.min(...allHumidities).toFixed(1);
+      const maxHumidity = Math.max(...allHumidities).toFixed(1);
+      const minPm2_5 = Math.min(...allPm2_5Values).toFixed(1);
+      const maxPm2_5 = Math.max(...allPm2_5Values).toFixed(1);
+
+      // Remove current month's entries from the database
+      for (const monthData of result) {
+          for (const key of monthData.keys) {
+              await remove(ref(db, `Data/${key}`));
+          }
+      }
+
+      // Add aggregated data back to the database
+      for (const monthData of result) {
+          const newData = {
+              id_user_machine: monthData.id_user_machine,
+              date: monthData.date,
+              temperature: monthData.temperature,
+              humidity: monthData.humidity,
+              pm2_5: monthData.pm2_5,
+          };
+
+          const newKey = push(ref(db, "Data")).key; // Generate a new key for the new entry
+          await set(ref(db, `Data/${newKey}`), newData); // Add new data
+      }
+
+      res.json({
+          data: result,
+          minTemperature: parseFloat(minTemperature),
+          maxTemperature: parseFloat(maxTemperature),
+          minHumidity: parseFloat(minHumidity),
+          maxHumidity: parseFloat(maxHumidity),
+          minPm2_5: parseFloat(minPm2_5),
+          maxPm2_5: parseFloat(maxPm2_5),
+      });
   } catch (error) {
-    res.status(500).json({ error: "Error retrieving data" });
+      res.status(500).json({ error: "Error retrieving data" });
   }
 });
+
 //npx nodemon server.ts
 
 //git init
