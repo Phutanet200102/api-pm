@@ -349,14 +349,14 @@ app.get("/user_machine/:id", async (req: Request, res: Response) => {
   }
 });
 
-app.put("/control/:id/:id_user_machine/:place/:status/:time", async (req, res) => {
+app.put("/control/:id/:id_user_machine/:place/:status/:time/:date", async (req, res) => {
   try {
     const id = req.params.id;
     const id_user_machine = req.params.id_user_machine;
     const place = req.params.place;
     const status = parseInt(req.params.status);
     const time = parseInt(req.params.time);
-    const date = moment().tz("Asia/Bangkok").format();
+    const date  = req.params.date;
 
     const machineRef = ref(db, `Control/${id}`);
     const newData = {
@@ -375,14 +375,14 @@ app.put("/control/:id/:id_user_machine/:place/:status/:time", async (req, res) =
   }
 });
 
-app.put("/control/status/:id/:id_user_machine/:place/:status/:time", async (req, res) => {
+app.put("/control/status/:id/:id_user_machine/:place/:status/:time/:date", async (req, res) => {
   try {
     const id = req.params.id;
     const id_user_machine = req.params.id_user_machine;
     const place = req.params.place;
     const status = parseInt(req.params.status);
     const time = parseInt(req.params.time);
-    const date = moment().tz("Asia/Bangkok").format();
+    const date = req.params.date;
     let statuses;
 
     if(status == 0){
