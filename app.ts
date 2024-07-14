@@ -723,8 +723,13 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
       groupedData[day][hour].pm2_5.push(entry.pm2_5);
     });
 
-    const monthlyData = Object.entries(groupedData).flatMap(([day, hoursData]) => {
-      return Object.entries(hoursData).map(([hour, values]) => {
+    // Sort groupedData by date
+    const sortedGroupedData = Object.entries(groupedData).sort(([day1], [day2]) => {
+      return moment(day1).isBefore(moment(day2)) ? -1 : 1;
+    });
+
+    const dailyData = sortedGroupedData.map(([day, hoursData]) => {
+      const hourlyData = Object.entries(hoursData).map(([hour, values]) => {
         const avgTemperature = (values.temperature.reduce((a, b) => a + b, 0) / values.temperature.length).toFixed(1);
         const avgHumidity = (values.humidity.reduce((a, b) => a + b, 0) / values.humidity.length).toFixed(1);
         const avgPm2_5 = (values.pm2_5.reduce((a, b) => a + b, 0) / values.pm2_5.length).toFixed(1);
@@ -737,27 +742,47 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
           temperature: parseFloat(avgTemperature),
           humidity: parseFloat(avgHumidity),
           pm2_5: parseFloat(avgPm2_5),
-          id: values.keys // Include the keys as id
         };
       });
+
+      const dailyTemperature = (hourlyData.reduce((sum, entry) => sum + entry.temperature, 0) / hourlyData.length).toFixed(1);
+      const dailyHumidity = (hourlyData.reduce((sum, entry) => sum + entry.humidity, 0) / hourlyData.length).toFixed(1);
+      const dailyPm2_5 = (hourlyData.reduce((sum, entry) => sum + entry.pm2_5, 0) / hourlyData.length).toFixed(1);
+      const firstEntry = hourlyData[0];
+
+      // Aggregate keys for the entire day
+      const dailyKeys = hourlyData.flatMap(entry => entry.keys);
+
+      return {
+        day,
+        hourlyData,
+        dailyAverage: {
+          id_user_machine: firstEntry.id_user_machine,
+          date: firstEntry.date,
+          temperature: parseFloat(dailyTemperature),
+          humidity: parseFloat(dailyHumidity),
+          pm2_5: parseFloat(dailyPm2_5),
+          keys: dailyKeys, // Include all keys for deletion
+        }
+      };
     });
 
-    // Calculate overall min/max for the month based on hourly averages
-    const allTemperatures = monthlyData.map(entry => entry.temperature);
-    const allHumidities = monthlyData.map(entry => entry.humidity);
-    const allPm2_5Values = monthlyData.map(entry => entry.pm2_5);
+    // Calculate overall min/max for the month based on daily averages
+    const allDailyTemperatures = dailyData.map(dayData => dayData.dailyAverage.temperature);
+    const allDailyHumidities = dailyData.map(dayData => dayData.dailyAverage.humidity);
+    const allDailyPm2_5Values = dailyData.map(dayData => dayData.dailyAverage.pm2_5);
 
-    const minTemperature = Math.min(...allTemperatures).toFixed(1);
-    const maxTemperature = Math.max(...allTemperatures).toFixed(1);
-    const minHumidity = Math.min(...allHumidities).toFixed(1);
-    const maxHumidity = Math.max(...allHumidities).toFixed(1);
-    const minPm2_5 = Math.min(...allPm2_5Values).toFixed(1);
-    const maxPm2_5 = Math.max(...allPm2_5Values).toFixed(1);
+    const minTemperature = Math.min(...allDailyTemperatures).toFixed(1);
+    const maxTemperature = Math.max(...allDailyTemperatures).toFixed(1);
+    const minHumidity = Math.min(...allDailyHumidities).toFixed(1);
+    const maxHumidity = Math.max(...allDailyHumidities).toFixed(1);
+    const minPm2_5 = Math.min(...allDailyPm2_5Values).toFixed(1);
+    const maxPm2_5 = Math.max(...allDailyPm2_5Values).toFixed(1);
 
     const updates: { [key: string]: null | any } = {};
 
-    monthlyData.forEach(entry => {
-      entry.keys.forEach(key => {
+    dailyData.forEach(dayData => {
+      dayData.dailyAverage.keys.forEach(key => {
         // Only mark for deletion if the key is not the latest
         if (key !== latestKey) {
           updates[`Data/${key}`] = null; // Mark for deletion
@@ -767,11 +792,11 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
       const newEntryKey = push(child(ref(db), "Data")).key;
       if (newEntryKey) {
         updates[`Data/${newEntryKey}`] = {
-          id_user_machine: entry.id_user_machine,
-          date: entry.date,
-          temperature: entry.temperature,
-          humidity: entry.humidity,
-          pm2_5: entry.pm2_5,
+          id_user_machine: dayData.dailyAverage.id_user_machine,
+          date: dayData.dailyAverage.date,
+          temperature: dayData.dailyAverage.temperature,
+          humidity: dayData.dailyAverage.humidity,
+          pm2_5: dayData.dailyAverage.pm2_5,
         };
       }
     });
@@ -779,12 +804,12 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
     await update(ref(db), updates);
 
     res.json({
-      data: monthlyData.map(({id_user_machine, date, temperature, humidity, pm2_5, keys }) => ({
-        id_user_machine,
-        date,
-        temperature,
-        humidity,
-        pm2_5,
+      data: dailyData.map(dayData => ({
+        id_user_machine: dayData.dailyAverage.id_user_machine,
+        date: dayData.dailyAverage.date,
+        temperature: dayData.dailyAverage.temperature,
+        humidity: dayData.dailyAverage.humidity,
+        pm2_5: dayData.dailyAverage.pm2_5,
       })),
       minTemperature: parseFloat(minTemperature),
       maxTemperature: parseFloat(maxTemperature),
