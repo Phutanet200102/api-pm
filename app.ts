@@ -307,11 +307,9 @@ app.get("/user_machine/:id", async (req: Request, res: Response) => {
           })
           .filter((control) => control !== null);
 
-        // Get the most recent control
         const controlIdess = controlIds.length > 0 ? controlIds[0] : null;
         const controlWithId = controlIdess ? { id: controlIdess, ...controlData[controlIdess] } : null;
 
-        // Get the most recent machine data
         const machineIdes = Object.keys(machinesData)[0];
         const machine = machinesData[machineIdes];
         const machineWithId = { id: machineIdes, ...machine };
@@ -321,7 +319,6 @@ app.get("/user_machine/:id", async (req: Request, res: Response) => {
           const dataData = dataSnapshot.val();
           const dataIds = Object.keys(dataData);
 
-          // Find the latest data entry
           const latestDataId = dataIds.reduce((latestId, currentId) => {
             return moment(dataData[currentId].date).isAfter(moment(dataData[latestId].date)) ? currentId : latestId;
           }, dataIds[0]);
@@ -589,10 +586,8 @@ app.get("/data/day/:id", async (req: Request, res: Response) => {
       return entryDate === currentDate;
     });
 
-    // Identify the latest key
     const latestKey = Object.keys(data).reduce((a, b) => (data[a].date > data[b].date ? a : b));
 
-    // Exclude the latest entry from filtered data
     const filteredDataWithoutLatest = filteredData.filter(([key]) => key !== latestKey);
 
     const groupedData: { [hour: string]: { keys: string[], temperature: number[], humidity: number[], pm2_5: number[], id_user_machine: string, date: string } } = {};
@@ -623,10 +618,8 @@ app.get("/data/day/:id", async (req: Request, res: Response) => {
       };
     });
 
-    // Sort hourlyData by hour from lowest to highest
     hourlyData.sort((a, b) => a.hour - b.hour);
 
-    // Remove entries from the original data, excluding the latest key
     for (const values of Object.values(groupedData)) {
       for (const key of values.keys) {
         if (key !== latestKey) {
@@ -635,9 +628,8 @@ app.get("/data/day/:id", async (req: Request, res: Response) => {
       }
     }
 
-    // Add aggregated data back to the database
     for (const hourData of hourlyData) {
-      const newKey = push(ref(db, "Data")).key; // Generate a new key for the new entry
+      const newKey = push(ref(db, "Data")).key;
       await set(ref(db, `Data/${newKey}`), {
         id_user_machine: hourData.id_user_machine,
         date: hourData.date,
@@ -647,7 +639,6 @@ app.get("/data/day/:id", async (req: Request, res: Response) => {
       });
     }
 
-    // Calculate min and max from hourlyData
     const averageTemperatures = hourlyData.map(entry => entry.temperature);
     const averageHumidities = hourlyData.map(entry => entry.humidity);
     const averagePm2_5Values = hourlyData.map(entry => entry.pm2_5);
@@ -695,12 +686,10 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
       return entryDate === currentDate && moment(entry.date).tz("Asia/Bangkok").format("YYYY-MM-DD") !== today;
     });
 
-    // Identify the latest key
     const latestKey = Object.keys(data).reduce((latest, key) => {
       return moment(data[key].date).isAfter(moment(data[latest].date)) ? key : latest;
     }, Object.keys(data)[0]);
 
-    // Exclude the latest entry from filtered data
     const filteredDataWithoutLatest = filteredData.filter(([key]) => key !== latestKey);
 
     const groupedData: { [day: string]: { [hour: string]: { keys: string[], temperature: number[], humidity: number[], pm2_5: number[], id_user_machine: string, date: string } } } = {};
@@ -723,7 +712,6 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
       groupedData[day][hour].pm2_5.push(entry.pm2_5);
     });
 
-    // Sort groupedData by date
     const sortedGroupedData = Object.entries(groupedData).sort(([day1], [day2]) => {
       return moment(day1).isBefore(moment(day2)) ? -1 : 1;
     });
@@ -750,7 +738,6 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
       const dailyPm2_5 = (hourlyData.reduce((sum, entry) => sum + entry.pm2_5, 0) / hourlyData.length).toFixed(1);
       const firstEntry = hourlyData[0];
 
-      // Aggregate keys for the entire day
       const dailyKeys = hourlyData.flatMap(entry => entry.keys);
 
       return {
@@ -762,12 +749,11 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
           temperature: parseFloat(dailyTemperature),
           humidity: parseFloat(dailyHumidity),
           pm2_5: parseFloat(dailyPm2_5),
-          keys: dailyKeys, // Include all keys for deletion
+          keys: dailyKeys, 
         }
       };
     });
 
-    // Calculate overall min/max for the month based on daily averages
     const allDailyTemperatures = dailyData.map(dayData => dayData.dailyAverage.temperature);
     const allDailyHumidities = dailyData.map(dayData => dayData.dailyAverage.humidity);
     const allDailyPm2_5Values = dailyData.map(dayData => dayData.dailyAverage.pm2_5);
@@ -783,9 +769,8 @@ app.get("/data/month/:id", async (req: Request, res: Response) => {
 
     dailyData.forEach(dayData => {
       dayData.dailyAverage.keys.forEach(key => {
-        // Only mark for deletion if the key is not the latest
         if (key !== latestKey) {
-          updates[`Data/${key}`] = null; // Mark for deletion
+          updates[`Data/${key}`] = null;
         }
       });
 
@@ -878,7 +863,6 @@ app.get("/data/year/:id", async (req: Request, res: Response) => {
           };
       });
 
-      // Calculate min and max values for temperature, humidity, and pm2_5
       const allTemperatures = result.map(entry => entry.temperature);
       const allHumidities = result.map(entry => entry.humidity);
       const allPm2_5Values = result.map(entry => entry.pm2_5);
@@ -890,14 +874,12 @@ app.get("/data/year/:id", async (req: Request, res: Response) => {
       const minPm2_5 = Math.min(...allPm2_5Values).toFixed(1);
       const maxPm2_5 = Math.max(...allPm2_5Values).toFixed(1);
 
-      // Remove current month's entries from the database
       for (const monthData of result) {
           for (const key of monthData.keys) {
               await remove(ref(db, `Data/${key}`));
           }
       }
 
-      // Add aggregated data back to the database
       for (const monthData of result) {
           const newData = {
               id_user_machine: monthData.id_user_machine,
@@ -907,8 +889,8 @@ app.get("/data/year/:id", async (req: Request, res: Response) => {
               pm2_5: monthData.pm2_5,
           };
 
-          const newKey = push(ref(db, "Data")).key; // Generate a new key for the new entry
-          await set(ref(db, `Data/${newKey}`), newData); // Add new data
+          const newKey = push(ref(db, "Data")).key;
+          await set(ref(db, `Data/${newKey}`), newData);
       }
 
       res.json({
